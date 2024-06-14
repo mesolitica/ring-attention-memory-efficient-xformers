@@ -3,15 +3,14 @@ import torch.distributed as dist
 from xformers.ops.fmha import (
     memory_efficient_attention_backward, 
     memory_efficient_attention_partial,
-    merge_attentions
 )
-from .utils import RingComm
+from .utils import RingComm, update_out_and_lse
 
 def forward(
     process_group, 
-    query, 
-    key, 
-    value, 
+    q, 
+    k, 
+    v, 
     attn_bias, 
     scale,
 ):
@@ -27,18 +26,14 @@ def forward(
             comm.commit()
         
         if step <= comm.rank:
-            output, lse = memory_efficient_attention_partial(
-                query = query,
-                key = key,
-                value = value,
+            block_out, block_lse = memory_efficient_attention_partial(
+                query = q,
+                key = k,
+                value = v,
                 attn_bias = attn_bias,
                 scale = scale
             )
-            if out is None:
-                out = block_out
-                lse = block_lse
-            else:
-                out, lse = merge_attentions([out, block_out], [lse, block_lse])
+            out, lse = update_out_and_lse(out, lse, block_out, block_lse)
         
         if step + 1 != comm.world_size:
             comm.wait()
@@ -48,5 +43,3 @@ def forward(
     out = out.to(q.dtype)
     lse = lse.to(q.dtype)
     return out, lse
-        
-        
